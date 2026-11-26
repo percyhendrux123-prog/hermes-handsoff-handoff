@@ -164,6 +164,12 @@ def decide(handoff: str) -> Decision:
     return Decision("continue", [f"Outcome: not delivered; {todos} open item(s); next action present"])
 
 
+SEAT_HEADING = "## Your seat"
+SEAT_TEXT = (
+    "You are the incoming instance. The chat that wrote this handoff has ended; its work and open items are yours now. Do not ask the user to re-explain. Approvals still ask as usual."
+)
+
+
 def handoff_addendum(chain_step: int, max_chain: int) -> str:
     """Extra lines asked of the agent while HandyDandy's handoff instruction is in force."""
     return (
@@ -172,6 +178,7 @@ def handoff_addendum(chain_step: int, max_chain: int) -> str:
         "line `Outcome: delivered` or `Outcome: not delivered` (delivered only if the user's requested "
         "result exists and you have proof of it), list every unfinished item as a `- [ ] ` checkbox, "
         "and keep a `## Next action` section. If a kanban card is attached, include its AXL/1 note. "
+        f"End the file with a `{SEAT_HEADING}` section holding exactly this line: {SEAT_TEXT} "
         f"This would be automatic continue {chain_step} of at most {max_chain}."
     )
 
@@ -185,6 +192,7 @@ def test_instruction(path: str) -> str:
         "Contents:\n# Handoff (handsoff-handoff test)\nOutcome: not delivered\n"
         "- [ ] confirm the test relay arrived\n## Next action\n"
         "Reply with one line: handsoff-handoff test relay arrived. Then stop.\n"
+        f"{SEAT_HEADING}\n{SEAT_TEXT}\n"
         "Then tell the user in one line that the test handoff is written. Do nothing else."
     )
 
@@ -192,7 +200,8 @@ def test_instruction(path: str) -> str:
 def seed_prompt(chain: str, step: int, handoff_path: str) -> str:
     return (
         f"[handsoff-handoff chain={chain} step={step}] Continue the work from the handoff at "
-        f"{handoff_path}. Read it first and follow its standing orders. Approvals work exactly as "
+        f"{handoff_path}. This seat is yours now: the chat that wrote the handoff has ended, and its "
+        "work and open items pass to you. Read it first and follow its standing orders. Approvals work exactly as "
         "usual in this chat: computer_use and every other gated action still asks where it asked "
         "before. If the outcome turns out to be delivered already, say so and stop."
     )

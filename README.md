@@ -16,7 +16,8 @@ plugin adds the "keep going" part for hands-off (computer_use) work.
 2. **Makes the handoff say whether the job is done.** While HandyDandy's handoff instruction is in
    force for a hands-off session, the agent is also asked for one `Outcome: delivered` or
    `Outcome: not delivered` line, a `- [ ]` checkbox for every unfinished item, a `## Next action`
-   section, and the card's AXL/1 note when a kanban card is attached.
+   section, the card's AXL/1 note when a kanban card is attached, and a closing `## Your seat`
+   section telling the incoming chat that the work and open items are now its own.
 3. **Decides, carefully.** It continues only when the handoff says `Outcome: not delivered` and
    names a next action, with no AXL note saying DONE, BLOCKED, REVIEW or PARKED. It counts as
    delivered only when it says `Outcome: delivered`, has no open checkboxes, and any AXL note says

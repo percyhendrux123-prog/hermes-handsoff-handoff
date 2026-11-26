@@ -341,5 +341,18 @@ class Wiring(unittest.TestCase):
         self.assertEqual(hd_state.read_bytes(), before, "HandyDandy's state is read, never written")
 
 
+class SeatTests(unittest.TestCase):
+    def test_seat_on_every_handoff_and_seed(self):
+        self.assertIn(core.SEAT_HEADING, core.handoff_addendum(1, 3))
+        self.assertIn(core.SEAT_TEXT, core.handoff_addendum(1, 3))
+        self.assertIn(core.SEAT_HEADING, core.test_instruction("/tmp/x.md"))
+        self.assertIn("seat is yours", core.seed_prompt("c", 1, "/tmp/x.md"))
+
+    def test_seat_section_does_not_change_verdict(self):
+        h = ("# Handoff\nOutcome: not delivered\n- [ ] a\n## Next action\ndo a\n"
+             + core.SEAT_HEADING + "\n" + core.SEAT_TEXT + "\n")
+        self.assertEqual(decide(h).verdict, "continue")
+
+
 if __name__ == "__main__":
     unittest.main()
