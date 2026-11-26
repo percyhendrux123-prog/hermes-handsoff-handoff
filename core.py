@@ -50,6 +50,7 @@ OPT_IN_RE = re.compile(
 OUTCOME_RE = re.compile(r"^\s*(?:[-*]\s*)?\**outcome\**\s*:\s*\**\s*(not\s+delivered|delivered)\b", re.I | re.M)
 OPEN_TODO_RE = re.compile(r"^\s*[-*]\s*\[\s\]\s+\S", re.M)
 AXL_RE = re.compile(r"^AXL/1\s+\S+\s+·\s+(READY|RUNNING|BLOCKED|REVIEW|DONE|PARKED)\s+·", re.M)
+TEST_RE = re.compile(r"\bhandsoff[\s-]handoff\s+test\b", re.I)
 NEXT_RE = re.compile(r"^#{1,6}\s*next\s+action\b.*?$\n(?P<body>(?:(?!^#{1,6}\s).*\n?)*)", re.I | re.M)
 
 
@@ -78,6 +79,7 @@ class Settings:
     auto_continue: bool = True
     active_window_minutes: int = 30
     max_chain: int = 2
+    test_mode: bool = False
 
     @classmethod
     def from_getter(cls, getter: Callable[[str, Any], Any]) -> "Settings":
@@ -93,6 +95,7 @@ class Settings:
             active_window_minutes=max(1, _as_int(get("active_window_minutes", d.active_window_minutes),
                                                  d.active_window_minutes)),
             max_chain=max(0, _as_int(get("max_chain", d.max_chain), d.max_chain)),
+            test_mode=_as_bool(get("test_mode", d.test_mode), d.test_mode),
         )
 
 
@@ -170,6 +173,19 @@ def handoff_addendum(chain_step: int, max_chain: int) -> str:
         "result exists and you have proof of it), list every unfinished item as a `- [ ] ` checkbox, "
         "and keep a `## Next action` section. If a kanban card is attached, include its AXL/1 note. "
         f"This would be automatic continue {chain_step} of at most {max_chain}."
+    )
+
+
+def test_instruction(path: str) -> str:
+    """Test mode only: a tiny handoff written on request, so one live relay can run without
+    waiting for HandyDandy's real size limit."""
+    return (
+        f"{MARK} TEST MODE. The user asked for a handsoff-handoff test relay. Write this file now "
+        f"with your file tool, exactly: {path}\n"
+        "Contents:\n# Handoff (handsoff-handoff test)\nOutcome: not delivered\n"
+        "- [ ] confirm the test relay arrived\n## Next action\n"
+        "Reply with one line: handsoff-handoff test relay arrived. Then stop.\n"
+        "Then tell the user in one line that the test handoff is written. Do nothing else."
     )
 
 
@@ -360,6 +376,18 @@ class Engine:
                     s["opted_out"] = True
             if sig is not None:  # the root chat's chain is its own session id
                 st["chains"].setdefault(s.get("chain") or session_id, {})["opted_out"] = not sig
+            if settings.test_mode and TEST_RE.search(text) and not seed:
+                if not self._active(s, settings):
+                    self.store.log("test_ignored", session_id=session_id, why="no recent computer_use")
+                    return {"context": f"{MARK} Test mode is on, but no computer_use call happened in the "
+                                       f"last {settings.active_window_minutes} minutes. Tell the user in one "
+                                       "line to run one computer_use action (a screenshot is enough) first."}
+                safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80]
+                tp = self.store.dir / "test-handoffs" / f"{safe}.md"
+                tp.parent.mkdir(parents=True, exist_ok=True)
+                s["test_armed"], s["test_path"] = self.clock(), str(tp)
+                self.store.log("test_armed", session_id=session_id)
+                return {"context": test_instruction(str(tp))}
             if s.get("opted_out") or not self._active(s, settings) or not self.hd_present():
                 return None
             hd = self.hd(session_id) or {}
@@ -372,22 +400,38 @@ class Engine:
     def on_turn_end(self, session_id: str = "", platform: str = "", surface: str = "",
                     **_: Any) -> Action:
         settings = self.settings_fn()
-        if not session_id or not settings.enabled or not self.hd_present():
+        if not session_id or not settings.enabled:
             return Action("none")
-        hd = self.hd(session_id) or {}
+        hd = (self.hd(session_id) or {}) if self.hd_present() else {}
         path = hd.get("handoff_path") or ""
-        if hd.get("mode") != "handoff" or not hd.get("handoff_done") or not path:
-            return Action("none")
+        if hd.get("mode") != "handoff" or not hd.get("handoff_done"):
+            path = ""
         where = (surface or platform or "").lower()
         with self.store.txn() as st:
             if st is None:
                 return Action("none")
+            s = st["sessions"].get(session_id)
+            if s is None:
+                return Action("none")
             s = self._sess(st, session_id)
-            if s.get("handled") == path:
+            test = False
+            if not path and settings.test_mode and s.get("test_armed"):
+                tp = Path(s.get("test_path") or "")
+                try:
+                    ok = tp.is_file() and tp.stat().st_size > 0 and tp.stat().st_mtime >= s["test_armed"] - 1
+                except OSError:
+                    ok = False
+                if ok:
+                    path, test = str(tp), True
+                    s.pop("test_armed", None)
+            if not path:
+                return Action("none")
+            if s.get("handled") == path and not test:
                 return Action("none")
             if not self._active(s, settings):
                 return Action("none")  # not a hands-off session: HandyDandy's own notice stands
             s["handled"] = path
+            tag = f"{MARK} (test)" if test else MARK
             try:
                 text = Path(path).read_text(errors="replace")
             except OSError:
@@ -399,39 +443,39 @@ class Engine:
             self.store.log("decided", session_id=session_id, verdict=d.verdict, reasons=d.reasons,
                            surface=where, chain=chain, step=step)
             if d.verdict == "delivered":
-                return Action("tell", f"{MARK} Handoff saved at {path}. The outcome reads as delivered, "
+                return Action("tell", f"{tag} Handoff saved at {path}. The outcome reads as delivered, "
                                       "so nothing continues automatically.")
             if d.verdict == "ask":
-                return Action("tell", f"{MARK} Handoff saved at {path}. I could not tell the work is still "
+                return Action("tell", f"{tag} Handoff saved at {path}. I could not tell the work is still "
                                       f"going ({'; '.join(d.reasons)}). Say \"from handoff {path}\" in a new "
                                       "chat to continue.")
             # verdict == continue
             if s.get("opted_out") or st["chains"].get(chain, {}).get("opted_out"):
-                return Action("tell", f"{MARK} Handoff saved at {path}. You said no auto handoff, so start "
+                return Action("tell", f"{tag} Handoff saved at {path}. You said no auto handoff, so start "
                                       f"the next chat yourself with: from handoff {path}")
             if not settings.auto_continue:
-                return Action("tell", f"{MARK} Handoff saved at {path}. Auto-continue is off in settings; "
+                return Action("tell", f"{tag} Handoff saved at {path}. Auto-continue is off in settings; "
                                       f"start the next chat with: from handoff {path}")
             if used >= settings.max_chain:
-                return Action("tell", f"{MARK} Handoff saved at {path}. This task already continued "
+                return Action("tell", f"{tag} Handoff saved at {path}. This task already continued "
                                       f"automatically {used} time(s), the limit, so I stopped here. Start "
                                       f"the next chat yourself with: from handoff {path}")
             if any(u in where for u in UNATTENDED):
-                return Action("tell", f"{MARK} Handoff saved at {path}. This run is unattended, so it does "
+                return Action("tell", f"{tag} Handoff saved at {path}. This run is unattended, so it does "
                                       "not continue on its own.")
             if where not in AUTO_SURFACES:
-                return Action("tell", f"{MARK} Handoff saved at {path}. Hermes gives plugins no way to open "
+                return Action("tell", f"{tag} Handoff saved at {path}. Hermes gives plugins no way to open "
                                       f"a new chat on {where or 'this surface'}; send /new, then: from handoff "
                                       f"{path}")
             pid = uuid.uuid4().hex
             st["pending"][pid] = {"session_id": session_id, "handoff_path": path, "chain": chain,
-                                  "step": step, "max_chain": settings.max_chain,
+                                  "step": step, "max_chain": settings.max_chain, "test": test,
                                   "prompt": seed_prompt(chain, step, path), "created": self.clock()}
             st["chains"].setdefault(chain, {})["used"] = used + 1
             self.store.log("queued", id=pid, session_id=session_id, chain=chain, step=step)
         return Action(
             "continue",
-            f"{MARK} Handoff saved at {path}. The work is still going, so the Desktop app is opening a "
+            f"{tag} Handoff saved at {path}. The work is still going, so the Desktop app is opening a "
             f"new chat from it (automatic continue {step} of {settings.max_chain}). Say \"no auto handoff\" "
             "to stop that next time.",
             {"id": pid, "session_id": session_id},

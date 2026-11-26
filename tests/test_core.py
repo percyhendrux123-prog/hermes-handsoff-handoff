@@ -90,7 +90,7 @@ class Reading(unittest.TestCase):
         self.assertEqual(decide(DONE + "\n- [ ] one more\n").verdict, "ask")  # delivered but open item
         self.assertEqual(decide(NOT_DONE + "Outcome: delivered\n").verdict, "ask")  # conflicting
         self.assertEqual(decide("Outcome: not delivered\n- [ ] x\n").verdict, "ask")  # no next action
-        blocked = NOT_DONE + "AXL/1  A1 · BLOCKED · NEED percy:decide\n"
+        blocked = NOT_DONE + "AXL/1  A1 · BLOCKED · NEED owner:decide\n"
         self.assertEqual(decide(blocked).verdict, "ask")
         axl_done = DONE + "AXL/1  A1 · DONE · NEED none:none\n"
         self.assertEqual(decide(axl_done).verdict, "delivered")
@@ -228,6 +228,46 @@ class Flow(unittest.TestCase):
         self.assertIn("continue 1 of at most 2", r["context"])
         h.engine.on_user_turn(session_id="s1", user_message="no auto handoff")
         self.assertIsNone(h.engine.on_user_turn(session_id="s1", user_message="keep going"))
+
+    def test_test_mode_off_ignores_the_phrase(self):
+        h = Harness(self)
+        h.drive("s1")
+        self.assertIsNone(h.engine.on_user_turn(session_id="s1", user_message="handsoff-handoff test"))
+        self.assertEqual(h.engine.on_turn_end(session_id="s1", surface="desktop").kind, "none")
+
+    def test_test_mode_runs_one_relay_without_handydandy_limit(self):
+        h = Harness(self, settings=Settings(test_mode=True))
+        h.drive("s1")
+        r = h.engine.on_user_turn(session_id="s1", user_message="please run the handsoff-handoff test")
+        self.assertIn("TEST MODE", r["context"])
+        tp = Path(h.store.dir / "test-handoffs" / "s1.md")
+        self.assertIn(str(tp), r["context"])
+        # Before the agent writes the file nothing happens.
+        self.assertEqual(h.engine.on_turn_end(session_id="s1", surface="desktop").kind, "none")
+        tp.write_text("# Handoff (handsoff-handoff test)\nOutcome: not delivered\n- [ ] confirm\n"
+                      "## Next action\nReply with one line.\n")
+        a = h.engine.on_turn_end(session_id="s1", surface="desktop")
+        self.assertEqual(a.kind, "continue")
+        self.assertIn("(test)", a.line)
+        self.assertEqual(len(h.store.pending_for(["s1"])), 1)
+        # One trigger, one relay.
+        self.assertEqual(h.engine.on_turn_end(session_id="s1", surface="desktop").kind, "none")
+
+    def test_test_mode_still_needs_computer_use_and_respects_opt_out_and_cap(self):
+        h = Harness(self, settings=Settings(test_mode=True, max_chain=1))
+        r = h.engine.on_user_turn(session_id="s1", user_message="handsoff-handoff test")
+        self.assertIn("no computer_use call", r["context"])
+        h.drive("s2")
+        h.engine.on_user_turn(session_id="s2", user_message="no auto handoff")
+        h.engine.on_user_turn(session_id="s2", user_message="handsoff-handoff test")
+        Path(h.store.dir / "test-handoffs" / "s2.md").write_text(NOT_DONE)
+        a = h.engine.on_turn_end(session_id="s2", surface="desktop")
+        self.assertEqual(a.kind, "tell")
+        self.assertIn("no auto handoff", a.line)
+        # A seeded chat that repeats the phrase does not re-arm the test.
+        h.drive("s3")
+        self.assertIsNone(h.engine.on_user_turn(
+            session_id="s3", user_message="[handsoff-handoff chain=s9 step=1] handsoff-handoff test"))
 
     def test_unreadable_state_fails_closed(self):
         h = Harness(self)

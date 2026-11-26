@@ -62,15 +62,56 @@ where a new chat you opened would ask. One difference to know: approvals you gra
 session" in the old chat do not carry over, so the new chat may ask again. That is stricter, never
 looser. Unattended runs (cron, kanban workers) never continue.
 
-## How it differs from hermes-handoff (yuzushi-dev)
+## How it differs from session-relay, long-conversations and hermes-handoff
 
-[hermes-handoff](https://github.com/yuzushi-dev/hermes-handoff) is a manual tool: you prepare a
-handoff and open it in a new CLI session (its `handoff-open` command starts a foreground,
-interactive Hermes with YOLO and non-interactive flags removed) or from a Desktop sidebar, and the
-new session waits for your confirmation. This plugin is automatic and narrower: it fires only at
-HandyDandy's size limit, only for computer_use sessions, decides on its own whether the work is
-still going, continues without a confirmation step (bounded by the chain limit and your opt-out),
-and starts no process at all. No code is shared.
+Each line about another plugin is taken from that plugin's own README, nothing more.
+
+- **[session-relay](https://github.com/ikuro4kin-dev/hermes-session-relay)** hands a long chat to
+  a fresh session when context usage crosses a threshold (45% by default). On Desktop its desktop
+  half asks the agent for a hand-off note, opens a new chat with `host.newChat()` and submits the
+  note with `host.composer.submit('new', note)`. On Telegram and other channels the flow is manual
+  by default (`/new`, then the note rides your next message), with an opt-in watchdog that resets
+  the chat through the gateway's own `/new`. It relays any chat that gets long.
+- **[long-conversations](https://github.com/cspears32/hermes-long-conversations)** watches token
+  use, stores a structured handoff brief (goals, files, decisions, dead ends, next step) and injects
+  it into the first turn of the next session for the same chat or user, with a parent-to-child
+  lineage file. It does not open the next session itself.
+- **[hermes-handoff](https://github.com/yuzushi-dev/hermes-handoff)** prepares a semantic handoff
+  and opens a new CLI session (`handoff-open`, a foreground interactive Hermes) or a Desktop session
+  from its sidebar, in the same profile. The new session reads the handoff and waits for your
+  confirmation before starting work. You start each handoff.
+
+**This plugin** is narrower than all three, and only adds a decision on top of a handoff:
+
+- It acts only while the agent is driving the computer (a `computer_use` call in the last 30
+  minutes). Ordinary chats are left alone.
+- The trigger is HandyDandy's size limit and HandyDandy's handoff file. It measures nothing itself.
+- It skips the relay when the handoff says the outcome was delivered, and asks you when the handoff
+  is unclear.
+- Plain words in the chat ("no auto handoff") turn it off for that chat and the chats continued
+  from it.
+- A chain cap (2 by default) stops it after that many automatic continues of one task.
+
+It shares no code with any of them. If you already run session-relay on Desktop, you do not need
+both for ordinary long chats; this one is for unattended computer work where "keep going or stop"
+matters.
+
+## Same approval path as session-relay (catalog rule 12)
+
+session-relay's `host.newChat()` and this plugin's `ctx.runAction('session.new')` are two doors
+into the same host function. In the Hermes Desktop source (v0.23.3):
+
+- `ctx.runAction('session.new')` runs the same handler as the New session key
+  (`apps/desktop/src/app/hooks/use-keybinds.ts`, `'session.new'`), which calls
+  `startFreshSession`, wired to `startFreshSessionDraft` (`apps/desktop/src/app/contrib/wiring.tsx`).
+- `host.newChat()` (`apps/desktop/src/sdk/index.ts`) calls `newSessionInProfile`, which calls
+  `requestFreshSession()` (`apps/desktop/src/store/profile.ts`); `useFreshSessionRequest` then runs
+  the same `startFreshSessionDraft`.
+- `startFreshSessionDraft` turns the draft's YOLO off (`setYoloActive(false)` in
+  `apps/desktop/src/app/session/hooks/use-session-actions/index.ts`). The session is created by the
+  app when the first message is sent, and YOLO is applied only if you arm it on that draft yourself.
+
+So the continued chat asks for approval exactly where a chat you open by hand would ask.
 
 ## Install (not done for you)
 
@@ -88,14 +129,34 @@ enabled with `mode: handoff`.
 | `auto_continue` | `true` | On Desktop, open the next chat when the work is still going |
 | `active_window_minutes` | `30` | How recent a computer_use call must be |
 | `max_chain` | `2` | Automatic continues per task before it stops and tells you |
+| `test_mode` | `false` | One live check without waiting for a full context (below) |
 
-Environment variables `HANDSOFF_<KEY>` override them (used in tests).
+Environment variables `HANDSOFF_<KEY>` override them (used in tests). The agent has no tool that
+changes these settings; only you can.
+
+## Test mode (for one live check)
+
+Waiting for HandyDandy's real limit makes a live check slow. With `test_mode` on, you can trigger
+one relay on demand:
+
+1. Turn it on: `hermes config set plugins.entries.handsoff-handoff.settings.test_mode true`.
+2. In a Desktop chat, have the agent run one `computer_use` action (a screenshot is enough). It asks
+   for approval the way it normally does.
+3. Type `handsoff-handoff test`. The agent writes a tiny test handoff to
+   `plugin-data/handsoff-handoff/test-handoffs/` that says the work is not delivered, and the normal
+   decision, opt-out, chain cap and Desktop steps run on it. The line in the chat says "(test)".
+4. The new chat opens with the seed prompt and replies "handsoff-handoff test relay arrived".
+5. Turn it off again: set `test_mode` to `false`.
+
+Test mode does not skip the computer_use check, the opt-out or the chain cap, and a continued chat
+that repeats the phrase does not trigger another test. With `test_mode` off the phrase does nothing.
 
 ## Disclosures
 
 - **Reads outside its own data:** HandyDandy's `plugin-data/handydandy/state.json` (read only, to
   see whether this session's handoff was written and where) and the handoff file HandyDandy points to.
-- **Writes:** only `plugin-data/handsoff-handoff/` (state.json, state.lock, events.log). Events log
+- **Writes:** only `plugin-data/handsoff-handoff/` (state.json, state.lock, events.log, and in test
+  mode the agent writes `test-handoffs/<session>.md` there). Events log
   session ids, decisions and handoff paths, never handoff contents.
 - **Backend routes:** `GET /api/plugins/handsoff-handoff/pending`, `POST /claim`, `POST /result`,
   behind the dashboard's normal auth gate. They only read and update this plugin's state.
@@ -110,7 +171,7 @@ Environment variables `HANDSOFF_<KEY>` override them (used in tests).
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests          # API route test skips without FastAPI
+python3 -m unittest discover -s tests          # API route test skips without FastAPI (20 tests)
 uv run --no-project --python 3.12 --with fastapi python -m unittest discover -s tests
 ```
 

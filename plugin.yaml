@@ -41,3 +41,8 @@ config_schema:
     default: 2
     label: Automatic continues per task
     description: After this many automatic continues of one task, it stops and tells you.
+  test_mode:
+    type: bool
+    default: false
+    label: Test mode
+    description: For one live check only. When on, typing "handsoff-handoff test" in a chat where computer_use ran recently writes a tiny test handoff and runs one relay, without waiting for HandyDandy's size limit. Leave off normally.
