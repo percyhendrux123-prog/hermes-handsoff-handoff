@@ -8,6 +8,10 @@ Requires [HandyDandy](https://github.com/percyhendrux123-prog/hermes-handydandy)
 mode. HandyDandy decides when a session is too long and has the agent write the handoff. This
 plugin adds the "keep going" part for hands-off (computer_use) work.
 
+[![Demo: a long computer_use session writes its handoff, a new chat opens and keeps working](docs/demo.gif)](https://github.com/percyhendrux123-prog/hermes-handsoff-handoff/releases/download/v0.1.1/handsoff-demo.mp4)
+
+Real screen recording, trimmed, sped up. Plugin test mode. [Full clip (MP4, 40 s)](https://github.com/percyhendrux123-prog/hermes-handsoff-handoff/releases/download/v0.1.1/handsoff-demo.mp4) · [YouTube Short](https://youtube.com/shorts/_SHdFyGYXCk)
+
 ## What it does
 
 1. **Notices the agent is driving the computer.** A `computer_use` tool call in this session within
