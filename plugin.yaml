@@ -1,0 +1,43 @@
+name: handsoff-handoff
+label: Handsoff Handoff
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: >
+  While the agent is driving the computer (computer_use), HandyDandy's handoff is written with a
+  clear outcome line. If the work is still going, the Desktop app opens a new chat from that handoff
+  and keeps going, up to a set number of times per task. Say "no auto handoff" to turn it off for
+  the chat. Other surfaces get one line saying where the handoff is. No subprocesses; approvals
+  are untouched.
+author: AXIOM
+license: MIT
+tags: [sessions, handoff, computer-use, desktop, context]
+requires_hermes: ">=0.23.3"
+requires_plugins:
+  - handydandy
+platforms: [macos, linux]
+provides_hooks:
+  - post_tool_call
+  - pre_llm_call
+  - post_llm_call
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    label: On
+    description: Turn the whole plugin on or off.
+  auto_continue:
+    type: bool
+    default: true
+    label: Continue automatically
+    description: On Desktop, open the next chat from the handoff when the work is still going. Off = it only tells you where the handoff is.
+  active_window_minutes:
+    type: int
+    default: 30
+    label: Computer-use window (minutes)
+    description: The session counts as hands-off when a computer_use call happened within this many minutes.
+  max_chain:
+    type: int
+    default: 2
+    label: Automatic continues per task
+    description: After this many automatic continues of one task, it stops and tells you.
